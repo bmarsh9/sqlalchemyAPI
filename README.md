@@ -1,6 +1,7 @@
 # sqlalchemyAPI
 
-Easily leverage this repo for any application that needs to take data in a database and display front end graphs or expose Restful API endpoints
+- Easily leverage this repo for any application that needs to take data in a database and display front end graphs or expose Restful API endpoints
+- Chose to use PostgreSQL and SQLAlchemy instead of relying on Elasticsearch. ES is great but I did not want to maintain/debug it and PostgreSQL is a lot more stable :)
 
 ## Purpose
 - Search (fuzzy, regex, etc.), filter, sort, limit, group by, distinct queries in SQLalchemy that is exposed through an API. The data can be stored and searched in indexed columns or columns with JSONB stored
