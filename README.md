@@ -27,7 +27,7 @@ import requests,json
 
 #// Set Up Query
 #// Any `subkey` array that is empty will mean that the field is not stored with a JSONB type
-d = {"query": {
+payload = {"query": {
          "or_": [
             {"column":"data","subkeys":["sale"],"op":"gt","value":1732},
             {"column":"data","subkeys":["category"],"op":"eq","value":"win32_computersystemA"},
@@ -45,7 +45,6 @@ d = {"query": {
          ]
      }
 }
-payload=d
 
 #// Send request to the server
 r = requests.get("http://localhost/api/raw/backup/testtable",json=payload)
