@@ -1,13 +1,15 @@
 #// Provides helper classes for the database models stored in models.py
 from flask import session,current_app
-from app.models import *
 from collections import namedtuple
-from sqlalchemy import func
+from sqlalchemy import func, exc
 from sqlalchemy.sql import and_, or_, not_
 from sqlalchemy import Integer
 from app.utils.formatmsg import msg_to_json
+from app.utils.db_resolver import get_table_object
 import random,colorsys
 import json
+from app import db
+import sys
 
 #// ------------------------------------------------------ Dynamic Query Helper ------------------------------------------------------
 class DynamicQuery():
@@ -15,7 +17,7 @@ class DynamicQuery():
     .Description: Helper function to generate queries in sqlalchemy
     .Example:
         query = DynamicQuery(
-            model_class="dbBlacklist", --> databaseClass (M)
+            model_class="Blacklist", --> databaseClass (M)
             request_args=[], --> parse request.args for parameters (from a uri string)
             filter=[("id", 'eq', 1),("datatype", 'eq', "path"),("date_added","gt","2018-05-10 02:05:57.1913")], --> filter to apply
             groupby=[("datatype","count"),("datavalue","group")], --> groupby fields
@@ -24,6 +26,7 @@ class DynamicQuery():
             getcount=False, --> return the count record
             as_query=False, --> return the raw query
             as_object=False, --> return the results as an object
+            as_json=False, --> return the results as JSON
             as_datatables=False, --> return the results in datatables form
             as_chartjs=False, --> return the results in chartjs form
             as_schema=False, --> return the schema of a table
@@ -36,12 +39,11 @@ class DynamicQuery():
         )
         query.generate().all()
     '''
-    def __init__(self, model, access_id=0, request_args=[], filter=[], groupby=[], orderby=(), inc_fields=[], exc_fields=[],
-        data={}, qjson={},getfirst=False, getcount=False, as_query=False, as_object=True, as_datatables=False, as_chartjs=False, as_schema=False, crud=None, limit=10):
+    def __init__(self, model, request_args=[], filter=[], groupby=[], orderby=(), inc_fields=[], exc_fields=[],
+        data={}, qjson={},getfirst=False, getcount=False, as_query=False, as_json=False,as_object=True, as_datatables=False, as_chartjs=False, as_schema=False, crud=None, limit=10, **kwargs):
         '''
         .Description --> Initialize variables, model is required
         '''
-        self.access_id = int(access_id)
         self.request_args = request_args
         self.filter = filter
         self.groupby = groupby
@@ -55,10 +57,13 @@ class DynamicQuery():
         self.exc_fields = exc_fields
         self.as_query = as_query
         self.as_object = as_object
+        self.as_json = as_json
         self.as_datatables = as_datatables
         self.as_chartjs = as_chartjs
         self.as_schema = as_schema
         self.limit = limit
+
+        self.py_version = sys.version_info
 
         #// Parse request.args from uri string
         if request_args:
@@ -66,40 +71,14 @@ class DynamicQuery():
 
         #// If grouping fields, get key names
         if self.groupby:
-            key_names = dict(self.groupby).keys()
+            if self.py_version < (3,0):
+                key_names = dict(self.groupby).keys() #python2
+            key_names = list(self.groupby)
             key_names.insert(0,"count")
             self.groupby_cols = key_names
 
         #// Get Database Model
-        model=model.lower()
-        model_record = self.all_models(model)
-        self.model = model_record[model]
-        self.restricted_attr = model_record["restricted"]
-        self.read = model_record["rights"].get("r")
-        self.write = model_record["rights"].get("w")
-
-    def all_models(self,model):
-        '''
-        .Description --> Database model mapping
-        .restricted --> these fields will not be returned
-        .access --> authenticated user must have their access field equal or above this value
-        '''
-        model_dict = [
-            {"dbuser":dbUser,"restricted":["password_hash"],"rights":{"r":1,"w":4}},
-            {"dbagent":dbAgent,"restricted":[],"rights":{"r":1,"w":4}},
-            {"dbagenthost":dbAgentHost,"restricted":[],"rights":{"r":1,"w":4}},
-            {"dbblacklist":dbBlacklist, "restricted":[],"rights":{"r":1,"w":4}},
-            {"dbwhitelist":dbWhitelist, "restricted":[],"rights":{"r":1,"w":4}},
-            {"dbaudit":dbAudit, "restricted":[],"rights":{"r":1,"w":4}},
-            {"dbtask":dbTask, "restricted":[],"rights":{"r":1,"w":4}},
-            {"dbagenthostinteract":dbAgentHostInteract, "restricted":[],"rights":{"r":1,"w":1}},
-            {"testtable":TestTable, "restricted":[],"rights":{"r":1,"w":1}},
-        ]
-        for record in model_dict:
-            if model in record:
-                return record
-        #// If not found in dict, restrict access
-        return {str(model):False,"restricted":[],"rights":{"r":None,"w":None}}
+        self.model = get_table_object(model)
 
     def getelement(self, li, index, default=None):
         '''
@@ -123,11 +102,19 @@ class DynamicQuery():
             Any parameters set explicitly in DynamicQuery() will override request.args
         '''
         for key,value in request.items():
-            if key == "filter" and value and not self.filter:
+#            if key == "filter" and value and not self.filter: #old
+#            self.filter = manually set
+            if key == "filter" and value:
+                hard_key = []
+                for keyname in self.filter:
+                    hard_key.append(keyname[0])
                 filter_list = []
                 for tup in value.split(";"):
-                    filter_list.append(tuple(tup.split(",")))
+                    keyname = tup.split(",")[0]
+                    if keyname not in hard_key:
+                        filter_list.append(tuple(tup.split(",")))
                 self.filter = filter_list
+
             elif key == "groupby" and value and not self.groupby:
                 group_list = []
                 for tup in value.split(";"):
@@ -151,6 +138,8 @@ class DynamicQuery():
                 self.as_chartjs = self.str2bool(value)
             elif key == "as_object" and value and not self.as_object:
                 self.as_object = self.str2bool(value)
+            elif key == "as_json" and value and not self.as_json:
+                self.as_json = self.str2bool(value)
             elif key == "as_query" and value and not self.as_query:
                 self.as_query = self.str2bool(value)
             elif key == "as_schema" and value and not self.as_schema:
@@ -171,15 +160,16 @@ class DynamicQuery():
                 temp_dic = {}
                 for count,field in enumerate(tup):
                     key = self.groupby_cols[count]
-                    if key not in self.restricted_attr and key not in self.exc_fields:
+                    if key not in self.exc_fields:
                         temp_dic[self.groupby_cols[count]] = str(field)
                 dataset.append(temp_dic)
         else:
           for record in data: #// data is a sqlalchemy object
             temp_dict = {}
-            del record.__dict__["_sa_instance_state"]
+            record.__dict__.pop("_sa_instance_state",None)
+#            del record.__dict__["_sa_instance_state"]
             for key,value in record.__dict__.items():
-                if key not in self.restricted_attr and key not in self.exc_fields:
+                if key not in self.exc_fields:
                     if not self.inc_fields:
                         temp_dict[key] = value
                     elif key in self.inc_fields:
@@ -224,7 +214,7 @@ class DynamicQuery():
         '''
         col_list = []
         for col in self.model.__table__.columns:
-            if col.key not in self.restricted_attr and col.key not in self.exc_fields:
+            if col.key not in self.exc_fields:
                 if not self.inc_fields:
                     col_list.append(str(col.key))
                 elif col.key in self.inc_fields:
@@ -237,6 +227,8 @@ class DynamicQuery():
         .data -> [{},{}]
         '''
         dataset = {"data":[],"count":0}
+        if not isinstance(data,list):
+            data = [data]
         for record in data:
             dataset["count"] += 1
             dataset["data"].append(namedtuple("Data", record.keys())(*record.values()))
@@ -248,6 +240,8 @@ class DynamicQuery():
         .data -> [{},{}]
         '''
         data_dict = {"draw":0,"data": [],"count":0}
+        if not isinstance(data,list):
+            data = [data]
         for record in data:
             data_dict["count"] += 1
             temp_list = []
@@ -261,7 +255,7 @@ class DynamicQuery():
                 try:
                     temp_list.append(record[field])
                 except KeyError:
-                    print "key: {%s} does not exist or restricted" % (field)
+                    print("key: {%s} does not exist or restricted" % (field))
             data_dict["data"].append(temp_list)
         return data_dict
 
@@ -272,6 +266,8 @@ class DynamicQuery():
         .data -> [{},{}]
         '''
         dataset = {"count":0, "label":[], "data": [], "color": []}
+        if not isinstance(data,list):
+            data = [data]
         chart_label = []
         chart_data = []
         for record in data:
@@ -279,8 +275,9 @@ class DynamicQuery():
             r,g,b = [int(256*i) for i in colorsys.hls_to_rgb(h,l,s)]
             color = "rgb(%s,%s,%s)" % (r,g,b)
             dataset["color"].append(color)
-
             dataset["count"] += 1
+            if "count" not in record:
+                dataset["warning"] = "Chartjs serialization requires the grouby parameter"
             for k,v in record.items():
                 if k == "count":
                     dataset["data"].append(v)
@@ -288,36 +285,61 @@ class DynamicQuery():
                     dataset["label"].append(v)
         return dataset
 
-    def to_crud(self,query):
+    def to_crud(self,query,action=None):
         '''
         .Description --> Perform CRUD operation
         '''
+        if action is None:
+            action = self.crud
         crud_list = ["insert","update","delete"]
-        if self.crud  in crud_list:
-            cols = self.to_schema()
-            if self.crud == "insert":
-                if self.model.__name__ == "dbUser":
-                    return dbUser().create_user(self.data)
-                else:
-                    record = self.model()
-                    for k,v in self.data.items():
-                        setattr(record,k,v)
-                    db.session.add(record)
-                    db.session.commit()
-                    return msg_to_json("Insert Success.",True,"success")
-            elif self.crud == "update":
-                if self.data:
-                    for k,v in self.data.items():
-                        if k not in cols:
-                            return msg_to_json("Invalid column data.")
-                    query = query.update(self.data)
-                    db.session.commit()
-                    return msg_to_json("Update Success.",True,"success")
-                return msg_to_json("Missing column data.")
-            elif self.crud == "delete":
-                query = query.delete()
+        if action in crud_list:
+          try:
+            #cols = self.to_schema()
+
+            if action == "insert":
+                record = self.model(**self.data)
+                db.session.add(record)
+                if self.as_query:
+                    return query
                 db.session.commit()
-                return msg_to_json("Delete Success.",True,"success")
+                return msg_to_json("Insert Success.",True,"success",id=record.id)
+
+            elif action == "update":
+                if self.data:
+                    #// insert if it doesnt exist yet
+                    exists = query.first()
+                    if not exists:
+                        return self.to_crud(query,action="insert")
+                     # Check if columns exist, safer but slow
+#                    for k,v in self.data.items():
+#                        if k not in cols:
+#                            return msg_to_json("Invalid column data.")
+                    query = query.update(self.data)
+                    if self.as_query:
+                        return query
+                    db.session.commit()
+                    if query is 1:
+                        return msg_to_json("Update Success.",True,"success")
+                    return msg_to_json("No data was updated.")
+                return msg_to_json("Missing column data.")
+
+            elif action == "delete":
+                query = query.delete()
+                if self.as_query:
+                    return query
+                db.session.commit()
+                if query is 1:
+                    return msg_to_json("Delete Success.",True,"success")
+                return msg_to_json("No data was deleted.")
+
+          except exc.IntegrityError:
+              return msg_to_json("Integrity error. Record exists.")
+          except Exception as e:
+              print("Exception: %s" % str(e))
+          finally:
+              db.session.rollback()
+              db.session.close()
+
         return msg_to_json("Invalid CRUD operation.")
 
     def filter_ops(self, filter_condition):
@@ -346,7 +368,7 @@ class DynamicQuery():
             except ValueError:
                 raise Exception('Invalid filter: %s' % raw)
 
-            column = getattr(self.model, key, None)
+            column = getattr(self.model, key.lower(), None)
             if not column:
                 raise Exception('Invalid filter column: %s' % key)
             if op == 'in':
@@ -354,6 +376,11 @@ class DynamicQuery():
                     filt = column.in_(value)
                 else:
                     filt = column.in_(value.split(','))
+#            elif op == 'not':
+#                if isinstance(value, list):
+#                    filt = column.not_(value)
+#                else:
+#                    filt = column.not_(value.split(','))
             else:
                 try:
                     attr = list(filter(lambda e: hasattr(column, e % op), ['%s', '%s_', '__%s__']))[0] % op
@@ -462,7 +489,7 @@ class DynamicQuery():
             #        query = query.filter(attr["op"](*attr["args"]))
 
         except Exception as e:
-            print str(e)
+            print(str(e))
         finally:
             return query
 
@@ -474,10 +501,7 @@ class DynamicQuery():
         try:
             dataset = []
 
-            if self.access_id < self.read or self.read is None:
-                raise Exception("User does not have Read access.")
-
-            if self.model is False:
+            if not self.model:
                 raise Exception("Database Model does not exist.")
 
             #// Return schema of table
@@ -489,8 +513,6 @@ class DynamicQuery():
 
             #// CRUD Operations
             if self.crud is not None:
-                if self.access_id < self.write:
-                    raise Exception("User does not have Write access.")
                 return self.to_crud(query)
 
             total_count = query.count()
@@ -506,26 +528,32 @@ class DynamicQuery():
             else:
                 #// Return count
                 if self.getcount is True:
-                    data_dict = {"data": [],"count":total_count,"total":total_count}
+                    data_dict = {"data": [],"count":int(total_count),"total":int(total_count)}
                     return data_dict
                 #// One record
                 elif self.getfirst is True:
                     raw_data = query.first()
                 else: #// Get all
                     raw_data = query.all()
-                data = self.filter_fields(raw_data)
 
+                if raw_data:
+                    data = self.filter_fields(raw_data)
 #                if self.orderby:
 #                    data = self.parse_orderby(data)
 
-                #// Specify the format
-                if self.as_datatables:
-                    dataset = self.to_datatables(data)
-                elif self.as_chartjs:
-                    dataset = self.to_chartjs(data)
-                elif self.as_object:
-                    dataset = self.to_object(data)
-                dataset["total"] = total_count
+                    #// Specify the format
+                    if self.as_datatables:
+                        dataset = self.to_datatables(data)
+                    elif self.as_chartjs:
+                        dataset = self.to_chartjs(data)
+                    elif self.as_json:
+                        dataset = {"count":0, "data": data}
+                    else:
+                        print("nope")
+                        dataset = self.to_object(data)
+                if not dataset:
+                    dataset = {"data": [],"count":0}
+                dataset["total"] = int(total_count)
                 return dataset
         except Exception as e:
             return msg_to_json(e)
