@@ -61,7 +61,7 @@ print json.dumps(data,indent=4)
     .Description: Helper function to generate queries in sqlalchemy
     .Example:
         query = DynamicQuery(
-            model_class="dbBlacklist", --> databaseClass (M)
+            model_class="Users", --> databaseClass (M)
             request_args=[], --> parse request.args for parameters (from a uri string)
             filter=[("id", 'eq', 1),("datatype", 'eq', "path"),("date_added","gt","2018-05-10 02:05:57.1913")], --> filter to apply
             groupby=[("datatype","count"),("datavalue","group")], --> groupby fields
@@ -71,7 +71,8 @@ print json.dumps(data,indent=4)
             as_query=False, --> return the raw query
             as_object=False, --> return the results as an object
             as_datatables=False, --> return the results in datatables form
-            as_chartjs=False, --> return the results in chartjs form
+            as_chartjs=False, --> return the results in chartjs form (requires groupby parameter)
+            as_json=False, --> return the results as JSON            
             as_schema=False, --> return the schema of a table
             crud=action, --> perform CRUD ops
             data=data, --> data to be used for CRUD (dictionary required, collect with: "data=request.get_json(silent=True)" )
