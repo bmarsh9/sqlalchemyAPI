@@ -29,6 +29,7 @@ class DynamicQuery():
             as_json=False, --> return the results as JSON
             as_datatables=False, --> return the results in datatables form
             as_chartjs=False, --> return the results in chartjs form
+            as_json=False, --> return the results as JSON (requires groupby parameter)
             as_schema=False, --> return the schema of a table
             crud=action, --> perform CRUD ops
             data=data, --> data to be used for CRUD (dictionary required, collect with: "data=request.get_json(silent=True)" )
