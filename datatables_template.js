@@ -44,7 +44,6 @@ function draw_datatable(selector,url=0,data=0,dt_ajax=1,render_cols=0,edit=0) {
     } else {
         dt_json["data"] = data // raw data
     }
-    console.log(edit);
     // Append Edit button
     if (edit) {
         $(selector+">thead>tr").append("<th>edit</th>");
