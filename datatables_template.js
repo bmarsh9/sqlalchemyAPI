@@ -1,20 +1,31 @@
 /*
 Description: Quickly render datatables graph
-Usage:
-  <script>
-    $(document).ready(function (){
-        $.noConflict();
+Usage: index.html
+  <html>
+    <body>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table id="example" class="table table-striped table-bordered"  style="width:100%">
+            <thead><tr></tr></thead>
+          </table>
+        </div>
+      </div>
+      <script>
+        $(document).ready(function (){
+            $.noConflict(); // remove this if not required
 
-        // draw datatable
-        var table = dt_init(
-            selector="#example", // table id selector
-            url = "/api/agent/data/users?as_datatables=true&inc_fields=id,email,active", // data url source
-            dt_ajax=0, // 1=render columns manually (requires render_cols="col1,col2,col3", 0=render columns dynamically
-            render_cols=0, // columns rendered (only used when dt_ajax=1)
-            edit=1, // add a column with a edit icon
-        )
-    });
-  </script>
+            // draw datatable
+            var table = dt_init(
+                selector="#example", // table id selector
+                url = "/api/agent/data/users?as_datatables=true&inc_fields=id,email,active", // data url source
+                dt_ajax=0, // 1=render columns manually (requires render_cols="col1,col2,col3", 0=render columns dynamically
+                render_cols=0, // columns rendered (only used when dt_ajax=1)
+                edit=1, // add a column with a edit icon
+            )
+        });
+      </script>
+    </body>
+  </html>
 */
 function draw_datatable(selector,url=0,data=0,dt_ajax=1,render_cols=0,edit=0) {
     var dt_json = {
