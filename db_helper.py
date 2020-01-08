@@ -22,6 +22,7 @@ class DynamicQuery():
             filter=[("id", 'eq', 1),("datatype", 'eq', "path"),("date_added","gt","2018-05-10 02:05:57.1913")], --> filter to apply
             groupby=[("datatype","count"),("datavalue","group")], --> groupby fields
             orderby=("id","desc"),
+            distinct="fieldname",
             getfirst=False, --> return the first record, a lot faster than sorting and limiting on large datasets
             getcount=False, --> return the count record
             as_query=False, --> return the raw query
@@ -29,8 +30,8 @@ class DynamicQuery():
             as_json=False, --> return the results as JSON
             as_datatables=False, --> return the results in datatables form
             as_chartjs=False, --> return the results in chartjs form
-            as_json=False, --> return the results as JSON (requires groupby parameter)
             as_schema=False, --> return the schema of a table
+            concat=False --> Concatenate data fields; Only used for ChartJS. If using >1 group, there will be multiple keys ({"key":"name","otherkey":"name2","count":100}). ChartJS expects {"key":"name","count":100}. Otherwise use exc_fields to limit fields
             crud=action, --> perform CRUD ops
             data=data, --> data to be used for CRUD (dictionary required, collect with: "data=request.get_json(silent=True)" )
             qjson=data, --> send a query formatted as json (dictionary required, collect with: "qjson=request.get_json(silent=True)" ) # BETA
@@ -40,8 +41,8 @@ class DynamicQuery():
         )
         query.generate().all()
     '''
-    def __init__(self, model, request_args=[], filter=[], groupby=[], orderby=(), inc_fields=[], exc_fields=[],
-        data={}, qjson={},getfirst=False, getcount=False, as_query=False, as_json=False,as_object=True, as_datatables=False, as_chartjs=False, as_schema=False, crud=None, limit=10, **kwargs):
+    def __init__(self, model, request_args=[], filter=[], groupby=[], orderby=(), distinct=None, inc_fields=[], exc_fields=[],
+        data={}, qjson={},getfirst=False, getcount=False, as_query=False, as_json=False,as_object=True, as_datatables=False, as_chartjs=False, as_schema=False, concat=None,crud=None, limit=10, **kwargs):
         '''
         .Description --> Initialize variables, model is required
         '''
@@ -49,13 +50,15 @@ class DynamicQuery():
         self.filter = filter
         self.groupby = groupby
         self.orderby = orderby
+        self.distinct = distinct
         self.getfirst = getfirst
         self.getcount = getcount
         self.crud = crud
+        self.concat = concat
         self.data = data
         self.qjson = qjson
         self.inc_fields = inc_fields
-        self.exc_fields = exc_fields
+        self.exc_fields = exc_fields + current_app.config["RESTRICTED_FIELDS"]
         self.as_query = as_query
         self.as_object = as_object
         self.as_json = as_json
@@ -74,8 +77,10 @@ class DynamicQuery():
         if self.groupby:
             if self.py_version < (3,0):
                 key_names = dict(self.groupby).keys() #python2
-            key_names = list(self.groupby)
-            key_names.insert(0,"count")
+            key_names=[]
+            for c in self.groupby:
+                key_names.append(c[0])
+            key_names.insert(0,"count") # insert count at beginning (every groupby will yield a count)
             self.groupby_cols = key_names
 
         #// Get Database Model
@@ -123,14 +128,17 @@ class DynamicQuery():
                 self.groupby = group_list
             elif key == "orderby" and value and not self.orderby:
                 self.orderby = tuple(value.split(","))
+            elif key == "distinct" and value and not self.distinct:
+                self.distinct = value
             elif key == "getfirst" and value and not self.getfirst:
                 self.getfirst = self.str2bool(value)
             elif key == "getcount" and value and not self.getcount:
                 self.getcount = self.str2bool(value)
             elif key == "inc_fields" and value and not self.inc_fields:
                 self.inc_fields = value.split(",")
-            elif key == "exc_fields" and value and not self.exc_fields:
-                self.exc_fields = value.split(",")
+            elif key == "exc_fields" and value:
+                self.exc_fields = value.split(",")+self.exc_fields
+                
             elif key == "limit" and value != 10:
                 self.limit = value
             elif key == "as_datatables" and value and not self.as_datatables:
@@ -147,6 +155,8 @@ class DynamicQuery():
                 self.as_schema = self.str2bool(value)
             elif key == "crud" and value and not self.crud:
                 self.crud = value
+            elif key == "concat" and value and not self.concat:
+                self.concat = value
 
     def filter_fields(self, data):
         '''
@@ -167,8 +177,8 @@ class DynamicQuery():
         else:
           for record in data: #// data is a sqlalchemy object
             temp_dict = {}
-            record.__dict__.pop("_sa_instance_state",None)
-#            del record.__dict__["_sa_instance_state"]
+            #record.__dict__.pop("_sa_instance_state",None)
+            del record.__dict__["_sa_instance_state"]
             for key,value in record.__dict__.items():
                 if key not in self.exc_fields:
                     if not self.inc_fields:
@@ -185,6 +195,7 @@ class DynamicQuery():
         '''
         base_fields = [] #// base fields
         group_fields = [] #// group_by fields
+        count_func = []
         for tup in self.groupby:
             field ,op = tup
             attr = getattr(self.model,field)
@@ -228,8 +239,8 @@ class DynamicQuery():
         .data -> [{},{}]
         '''
         dataset = {"data":[],"count":0}
-        if not isinstance(data,list):
-            data = [data]
+        #if not isinstance(data,list):
+        #    data = [data]
         for record in data:
             dataset["count"] += 1
             dataset["data"].append(namedtuple("Data", record.keys())(*record.values()))
@@ -240,7 +251,7 @@ class DynamicQuery():
         .Description --> Turn data into datatables graph format
         .data -> [{},{}]
         '''
-        data_dict = {"draw":0,"data": [],"count":0}
+        data_dict = {"draw":0,"data": [],"count":0,"columns":[]}
         if not isinstance(data,list):
             data = [data]
         for record in data:
@@ -255,6 +266,8 @@ class DynamicQuery():
             for field in include_fields:
                 try:
                     temp_list.append(record[field])
+                    if field not in data_dict["columns"]:
+                        data_dict["columns"].append(field)
                 except KeyError:
                     print("key: {%s} does not exist or restricted" % (field))
             data_dict["data"].append(temp_list)
@@ -269,8 +282,6 @@ class DynamicQuery():
         dataset = {"count":0, "label":[], "data": [], "color": []}
         if not isinstance(data,list):
             data = [data]
-        chart_label = []
-        chart_data = []
         for record in data:
             h,s,l = random.random(), 0.3 + random.random()/2.0, 0.4 + random.random()/5.0
             r,g,b = [int(256*i) for i in colorsys.hls_to_rgb(h,l,s)]
@@ -279,11 +290,17 @@ class DynamicQuery():
             dataset["count"] += 1
             if "count" not in record:
                 dataset["warning"] = "Chartjs serialization requires the grouby parameter"
+            temp_str = ""
             for k,v in record.items():
                 if k == "count":
                     dataset["data"].append(v)
                 else:
-                    dataset["label"].append(v)
+                    if self.concat:
+                        temp_str+="{}->".format(v)
+                    else:
+                        dataset["label"].append(v)
+            if temp_str:
+                dataset["label"].append(temp_str[:-2])
         return dataset
 
     def to_crud(self,query,action=None):
@@ -363,6 +380,10 @@ class DynamicQuery():
                 __query = __query.group_by(*group_fields)
         else:
             __query = db.session.query(self.model)
+
+        if self.distinct:
+            __query = __query.distinct(getattr(self.model,self.distinct))
+
         for raw in filter_condition:
             try:
                 key, op, value = raw
@@ -550,7 +571,6 @@ class DynamicQuery():
                     elif self.as_json:
                         dataset = {"count":0, "data": data}
                     else:
-                        print("nope")
                         dataset = self.to_object(data)
                 if not dataset:
                     dataset = {"data": [],"count":0}
